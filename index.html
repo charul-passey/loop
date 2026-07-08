@@ -248,8 +248,9 @@
     transform: translateY(100%);
     z-index: 35;
     will-change: transform;
+    touch-action: none;
   }
-  .grab { flex: none; padding: 12px 0 4px; display: flex; justify-content: center; touch-action: none; cursor: grab; }
+  .grab { flex: none; padding: 12px 0 4px; display: flex; justify-content: center; cursor: grab; }
   .grab:active { cursor: grabbing; }
   .grab-bar { width: 40px; height: 5px; border-radius: 3px; background: var(--neutral); }
   .shelf-head { flex: none; touch-action: none; padding: 4px 20px 12px; }
@@ -260,7 +261,8 @@
   .shelf-grid {
     display: grid;
     grid-template-columns: repeat(3, 1fr);
-    gap: 6px;
+    column-gap: 6px;
+    row-gap: 0;
     padding: 4px 16px calc(env(safe-area-inset-bottom) + 24px);
   }
   @media (max-width: 380px) { .shelf-grid { grid-template-columns: repeat(2, 1fr); } }
@@ -269,13 +271,13 @@
     display: flex;
     flex-direction: column;
     align-items: center;
-    padding: 2px 4px 4px;
+    padding: 0 4px 2px;
     border-radius: 10px;
   }
-  .shelf-cell svg { width: 100%; height: auto; aspect-ratio: 1; }
-  .shelf-cell .cell-path { fill: none; stroke: var(--ink); stroke-width: 2.2; stroke-linecap: round; stroke-linejoin: round; }
+  .shelf-cell svg { width: 100%; height: auto; aspect-ratio: 1; display: block; margin-bottom: -6px; }
+  .shelf-cell .cell-path { fill: none; stroke: var(--ink); stroke-width: 2.4; stroke-linecap: round; stroke-linejoin: round; }
   .shelf-cell.partial { opacity: 0.4; }
-  .shelf-cell .cell-date { font-family: var(--mono); font-size: 10px; letter-spacing: 0.04em; color: var(--neutral); margin-top: 3px; }
+  .shelf-cell .cell-date { font-family: var(--mono); font-size: 10px; letter-spacing: 0.02em; color: var(--neutral); margin-top: 0; white-space: nowrap; }
 
   .shelf-empty {
     height: 100%;
@@ -959,8 +961,8 @@ function renderShelf() {
     cell.className = "shelf-cell" + (w.completed ? "" : " partial");
     cell.innerHTML =
       '<svg viewBox="0 0 100 100" aria-hidden="true"><path class="cell-path" d="' +
-      polylineToPath(w.polyline, 100, 12) + '"></path></svg>' +
-      '<span class="cell-date">' + fmtDate(w.date) + '</span>';
+      polylineToPath(w.polyline, 100, 4) + '"></path></svg>' +
+      '<span class="cell-date">' + fmtDate(w.date) + ' · ' + w.duration + ' min</span>';
     cell.addEventListener("click", () => openDetail(realIdx));
     body.appendChild(cell);
   });
@@ -972,7 +974,7 @@ function renderShelf() {
 const SHELF_SNAP = { closed: 100, half: 50, full: 0 };
 let shelfState = "closed";
 let shelfPos = 100; // current translateY, as a percent of the panel height
-let shelfDragging = false;
+let shelfDragging = false, shelfStartInBody = false, shelfDidDrag = false;
 let shelfStartY = 0, shelfStartPos = 0, shelfLastY = 0, shelfLastT = 0, shelfVel = 0;
 
 function shelfApply(pos, animate) {
@@ -994,31 +996,60 @@ function snapSheet(state) {
 function openShelf() { renderShelf(); if (shelfState === "closed") snapSheet("half"); }
 function closeShelf() { snapSheet("closed"); }
 
+// The whole sheet is draggable. A drag on the grid moves the sheet, unless the
+// sheet is full and the grid still has room to scroll, in which case the drag
+// scrolls the grid instead. Since the panel has touch-action none, the grid is
+// scrolled by hand so the two gestures never fight.
+let shelfMode = null; // "sheet", "scroll", or null until the intent is known
 function shelfDragStart(e) {
   shelfDragging = true;
+  shelfMode = null;
+  shelfDidDrag = false;
   shelfStartY = e.clientY;
   shelfStartPos = shelfPos;
   shelfLastY = e.clientY;
   shelfLastT = performance.now();
   shelfVel = 0;
+  shelfStartInBody = $("shelf-body").contains(e.target);
   $("shelf").style.transition = "none";
-  try { e.currentTarget.setPointerCapture(e.pointerId); } catch (err) {}
 }
 function shelfDragMove(e) {
   if (!shelfDragging) return;
-  const vh = window.innerHeight || 1;
-  let pos = shelfStartPos + (e.clientY - shelfStartY) / vh * 100;
-  pos = Math.max(0, Math.min(100, pos));
+  const y = e.clientY;
+  const frame = y - shelfLastY; // positive is downward
+  const body = $("shelf-body");
+
+  if (shelfMode === null) {
+    if (Math.abs(y - shelfStartY) < 5) { return; } // wait for a clear intent
+    if (!shelfStartInBody || shelfState !== "full") shelfMode = "sheet";
+    else shelfMode = (y - shelfStartY > 0 && body.scrollTop <= 0) ? "sheet" : "scroll";
+    shelfDidDrag = true;
+    shelfStartY = y;
+    shelfStartPos = shelfPos;
+    try { $("shelf").setPointerCapture(e.pointerId); } catch (err) {}
+  }
+
   const now = performance.now();
   const dt = now - shelfLastT;
-  if (dt > 0) shelfVel = (e.clientY - shelfLastY) / dt; // px per ms, positive is down
-  shelfLastY = e.clientY;
+  if (dt > 0) shelfVel = frame / dt;
+  shelfLastY = y;
   shelfLastT = now;
+
+  if (shelfMode === "scroll") {
+    body.scrollTop -= frame;
+    // pulling down past the top hands the gesture over to closing the sheet
+    if (body.scrollTop <= 0 && frame > 0) { shelfMode = "sheet"; shelfStartY = y; shelfStartPos = shelfPos; }
+    return;
+  }
+  const vh = window.innerHeight || 1;
+  let pos = shelfStartPos + (y - shelfStartY) / vh * 100;
+  pos = Math.max(0, Math.min(100, pos));
   shelfApply(pos, false);
 }
 function shelfDragEnd() {
   if (!shelfDragging) return;
   shelfDragging = false;
+  if (shelfMode !== "sheet") return; // a scroll gesture leaves the sheet where it is
   const pos = shelfPos;
   let target;
   if (shelfVel > 0.5) target = pos > 40 ? "closed" : "half";      // fast flick down
@@ -1030,13 +1061,15 @@ function shelfDragEnd() {
   snapSheet(target);
 }
 
-["shelf-grab", "shelf-head"].forEach(id => {
-  const el = $(id);
-  el.addEventListener("pointerdown", shelfDragStart);
-  el.addEventListener("pointermove", shelfDragMove);
-  el.addEventListener("pointerup", shelfDragEnd);
-  el.addEventListener("pointercancel", shelfDragEnd);
-});
+const shelfPanel = $("shelf");
+shelfPanel.addEventListener("pointerdown", shelfDragStart);
+shelfPanel.addEventListener("pointermove", shelfDragMove);
+shelfPanel.addEventListener("pointerup", shelfDragEnd);
+shelfPanel.addEventListener("pointercancel", shelfDragEnd);
+// A drag that started on a shape must not also open its detail on release.
+shelfPanel.addEventListener("click", e => {
+  if (shelfDidDrag) { e.stopPropagation(); e.preventDefault(); shelfDidDrag = false; }
+}, true);
 
 $("shelf-link").addEventListener("click", openShelf);
 $("shelf-scrim").addEventListener("click", closeShelf);
