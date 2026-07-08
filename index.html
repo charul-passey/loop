@@ -64,6 +64,20 @@
     padding: env(safe-area-inset-top) 24px calc(env(safe-area-inset-bottom) + 24px);
   }
 
+  .refresh-hint {
+    position: fixed;
+    top: calc(env(safe-area-inset-top) + 12px);
+    left: 0; right: 0;
+    text-align: center;
+    font-family: var(--mono);
+    font-size: 11px;
+    letter-spacing: 0.1em;
+    color: var(--neutral);
+    opacity: 0;
+    pointer-events: none;
+    z-index: 6;
+  }
+
   .wordmark {
     position: absolute;
     top: calc(env(safe-area-inset-top) + 22px);
@@ -406,6 +420,9 @@
 </style>
 </head>
 <body data-screen="idle">
+
+  <!-- Pull-to-refresh hint, shown while pulling the idle screen down -->
+  <div id="refresh-hint" class="refresh-hint"><span>pull to refresh</span></div>
 
   <!-- Idle -->
   <section id="idle" class="screen active">
@@ -1244,14 +1261,56 @@ function exportPNG(w) {
   a.click();
 }
 
-/* ---------- swipe up on idle to open shelf ---------- */
-let touchStartY = null;
-$("idle").addEventListener("touchstart", e => { touchStartY = e.touches[0].clientY; }, { passive: true });
+/* ---------- idle gestures: swipe up opens the shelf, pull down refreshes ---------- */
+let touchStartY = null, pulling = false;
+const PULL_READY = 58; // how far the content must move before a release refreshes
+
+function canPull() {
+  return document.body.dataset.screen === "idle"
+    && shelfState === "closed"
+    && !document.body.classList.contains("generating");
+}
+
+$("idle").addEventListener("touchstart", e => {
+  touchStartY = e.touches[0].clientY;
+  pulling = false;
+  $("idle").style.transition = "";
+}, { passive: true });
+
+$("idle").addEventListener("touchmove", e => {
+  if (touchStartY === null || !canPull()) return;
+  const dy = e.touches[0].clientY - touchStartY;
+  if (dy <= 0) return; // downward pulls only; upward is the shelf swipe
+  if (!pulling && dy < 12) return; // small dead zone so a tap does not engage
+  pulling = true;
+  const damped = Math.min(130, dy * 0.5); // rubber band
+  $("idle").style.transform = "translateY(" + damped + "px)";
+  const hint = $("refresh-hint");
+  hint.style.opacity = Math.min(1, damped / 46).toFixed(2);
+  hint.firstElementChild.textContent = damped >= PULL_READY ? "release to refresh" : "pull to refresh";
+}, { passive: true });
+
 $("idle").addEventListener("touchend", e => {
   if (touchStartY === null) return;
-  const dy = touchStartY - e.changedTouches[0].clientY;
-  if (dy > 70) openShelf();
+  const dy = e.changedTouches[0].clientY - touchStartY;
   touchStartY = null;
+
+  if (pulling) {
+    pulling = false;
+    const damped = Math.min(130, dy * 0.5);
+    $("idle").style.transition = "transform 0.3s ease";
+    if (damped >= PULL_READY) {
+      $("refresh-hint").firstElementChild.textContent = "refreshing";
+      $("idle").style.transform = "translateY(44px)";
+      setTimeout(() => location.reload(), 260);
+    } else {
+      $("idle").style.transform = "translateY(0)";
+      $("refresh-hint").style.opacity = "0";
+    }
+    return;
+  }
+
+  if (-dy > 70) openShelf(); // swipe up
 }, { passive: true });
 
 /* ---------- address prompt ---------- */
