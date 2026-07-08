@@ -801,6 +801,8 @@ function getCurrentStart() {
 let map = null, userMarker = null;
 let currentRouteCoords = null, startPoint = null, currentDuration = 20;
 let watchId = null, timerId = null, walkStartedAt = 0, lastPos = 0, walkFinished = false;
+// Smooth dot animation: glide the marker between GPS readings instead of jumping.
+let dotAnim = null, dotFrom = null, dotTo = null, dotStart = 0, dotDur = 0, dotLastUpdate = 0;
 
 function buildStyle(night) {
   const tiles = night
@@ -902,14 +904,35 @@ function startWalking(coords, start, night) {
 function onPosition(p) {
   const now = Date.now();
   const here = [p.coords.longitude, p.coords.latitude];
-  // Throttle map work to about every five seconds to spare the battery.
-  if (now - lastPos < 5000) {
-    if (haversine(here, startPoint) < RETURN_METERS && now - walkStartedAt > 30000) finishWalk(true);
-    return;
-  }
-  lastPos = now;
-  if (userMarker) userMarker.setLngLat(here);
+  moveDotTo(here);
   if (haversine(here, startPoint) < RETURN_METERS && now - walkStartedAt > 30000) finishWalk(true);
+}
+
+// Glide the dot from where it is now to the newest reading over roughly the
+// time since the last one, so it walks along the path instead of jumping.
+function moveDotTo(target) {
+  if (!userMarker) return;
+  const reduce = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  if (reduce) { userMarker.setLngLat(target); return; }
+  const cur = userMarker.getLngLat();
+  const now = performance.now();
+  dotFrom = [cur.lng, cur.lat];
+  dotTo = target;
+  dotStart = now;
+  dotDur = dotLastUpdate ? Math.min(6000, Math.max(700, now - dotLastUpdate)) : 800;
+  dotLastUpdate = now;
+  if (!dotAnim) dotAnim = requestAnimationFrame(dotFrame);
+}
+
+function dotFrame(t) {
+  dotAnim = null;
+  if (!dotTo || !userMarker) return;
+  const p = Math.min(1, (t - dotStart) / dotDur);
+  userMarker.setLngLat([
+    dotFrom[0] + (dotTo[0] - dotFrom[0]) * p,
+    dotFrom[1] + (dotTo[1] - dotFrom[1]) * p
+  ]);
+  if (p < 1) dotAnim = requestAnimationFrame(dotFrame);
 }
 
 function stopWalk() {
@@ -917,6 +940,8 @@ function stopWalk() {
   watchId = null;
   if (timerId) clearInterval(timerId);
   timerId = null;
+  if (dotAnim) cancelAnimationFrame(dotAnim);
+  dotAnim = null; dotTo = null; dotLastUpdate = 0;
   try { localStorage.removeItem(STORE_KEY + ".current"); } catch (e) {}
 }
 
