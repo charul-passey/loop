@@ -756,6 +756,7 @@ function buildStyle(night) {
 }
 
 function applyRoute() {
+  map.resize(); // container may have changed size while the map was hidden
   const gj = { type: "Feature", geometry: { type: "LineString", coordinates: currentRouteCoords } };
   if (map.getSource("route")) {
     map.getSource("route").setData(gj);
@@ -811,8 +812,11 @@ function startWalking(coords, start, night) {
   // Cache the route the moment it exists so signal loss does not break the walk.
   try { localStorage.setItem(STORE_KEY + ".current", JSON.stringify({ coords, start, duration: currentDuration })); } catch (e) {}
 
-  ensureMap(night);
+  // Show the map screen first so the container has real dimensions when
+  // MapLibre measures it. Creating the map while it is hidden makes it size
+  // to a zero box and never fill the screen.
   setScreen("walking");
+  ensureMap(night);
 
   walkStartedAt = Date.now();
   lastPos = 0;
