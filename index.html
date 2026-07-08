@@ -621,19 +621,33 @@ async function geocode(text) {
 }
 
 // Generate a route, favouring novelty, then falling back to an out-and-back.
+// The first candidate is fetched on its own, so a novel loop returns after a
+// single request. Only when it is too similar do the remaining attempts run
+// at the same time, so a repeat never costs more than two round-trip waits.
 async function generateRoute(start, minutes) {
   const length = minutes * METERS_PER_MIN;
   let best = null, bestSim = Infinity, anySucceeded = false;
-  for (let attempt = 0; attempt < NOVELTY_ATTEMPTS; attempt++) {
-    let coords;
-    try { coords = await requestRoundTrip(start, length, randSeed()); }
-    catch (e) { if (e && e.noKey) throw e; continue; }
+
+  try {
+    const coords = await requestRoundTrip(start, length, randSeed());
     anySucceeded = true;
-    const sim = maxSimilarity(coords);
-    if (sim < bestSim) { bestSim = sim; best = coords; }
-    if (sim <= SIMILARITY_LIMIT) return { coords: coords, mode: "loop" };
+    bestSim = maxSimilarity(coords);
+    best = coords;
+    if (bestSim <= SIMILARITY_LIMIT) return { coords: coords, mode: "loop" };
+  } catch (e) { if (e && e.noKey) throw e; }
+
+  const rest = [];
+  for (let i = 1; i < NOVELTY_ATTEMPTS; i++) rest.push(requestRoundTrip(start, length, randSeed()));
+  const results = await Promise.allSettled(rest);
+  for (const r of results) {
+    if (r.status === "rejected" && r.reason && r.reason.noKey) throw r.reason;
+    if (r.status !== "fulfilled") continue;
+    anySucceeded = true;
+    const sim = maxSimilarity(r.value);
+    if (sim < bestSim) { bestSim = sim; best = r.value; }
   }
   if (anySucceeded && best) return { coords: best, mode: "loop" };
+
   const coords = await requestOutAndBack(start, length);
   return { coords: coords, mode: "outback" };
 }
@@ -703,10 +717,13 @@ function exitGenerating(msg) {
 function getCurrentStart() {
   return new Promise((resolve, reject) => {
     if (!navigator.geolocation) { reject({ type: "denied" }); return; }
+    // A coarse fix is plenty to start a loop and is far faster than a GPS
+    // lock. A recent cached position is accepted so a second walk is instant.
+    // Position tracking during the walk stays high accuracy.
     navigator.geolocation.getCurrentPosition(
       p => resolve([p.coords.longitude, p.coords.latitude]),
       () => reject({ type: "denied" }),
-      { enableHighAccuracy: true, timeout: 10000, maximumAge: 60000 }
+      { enableHighAccuracy: false, timeout: 8000, maximumAge: 120000 }
     );
   });
 }
