@@ -832,11 +832,17 @@ function applyRoute() {
   if (map.getSource("route")) {
     map.getSource("route").setData(gj);
   } else {
-    map.addSource("route", { type: "geojson", data: gj });
+    // lineMetrics lets us colour the line by how far along it we are.
+    map.addSource("route", { type: "geojson", data: gj, lineMetrics: true });
     map.addLayer({
       id: "route", type: "line", source: "route",
       layout: { "line-cap": "round", "line-join": "round" },
-      paint: { "line-color": "#0E6E78", "line-width": 4 }
+      paint: {
+        // The whole loop starts teal. As you walk, the part behind you turns
+        // to the warm neutral, so teal always marks the way still ahead.
+        "line-gradient": ["step", ["line-progress"], ROUTE_TEAL, 0.0001, ROUTE_TEAL],
+        "line-width": 4
+      }
     });
   }
   let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
@@ -852,6 +858,52 @@ function applyRoute() {
     userMarker = new maplibregl.Marker({ element: el });
   }
   userMarker.setLngLat(startPoint).addTo(map);
+  if (routeTotal) setRouteProgress(walkProgress); // restore colour after a restyle
+}
+
+/* ---------- walked-so-far colouring ---------- */
+const ROUTE_TEAL = "#0E6E78";
+const ROUTE_WALKED = "#C9C2B6"; // the warm neutral, for the path already behind you
+let routeCum = [], routeTotal = 0, routeK = 1, walkProgress = 0;
+
+// Precompute cumulative segment lengths so we can find how far along the loop a
+// point is. Planar with a cos(lat) correction, which is plenty at walk scale.
+function prepRouteProgress(coords) {
+  routeK = Math.cos(coords[0][1] * Math.PI / 180);
+  routeCum = [0];
+  let total = 0;
+  for (let i = 1; i < coords.length; i++) {
+    const dx = (coords[i][0] - coords[i - 1][0]) * routeK;
+    const dy = coords[i][1] - coords[i - 1][1];
+    total += Math.hypot(dx, dy);
+    routeCum.push(total);
+  }
+  routeTotal = total || 1;
+  walkProgress = 0;
+}
+
+// Fraction along the loop of the nearest point to a position, in [0, 1].
+function progressAt(lng, lat) {
+  const px = lng * routeK, py = lat;
+  let best = Infinity, along = 0;
+  for (let i = 1; i < currentRouteCoords.length; i++) {
+    const ax = currentRouteCoords[i - 1][0] * routeK, ay = currentRouteCoords[i - 1][1];
+    const dx = currentRouteCoords[i][0] * routeK - ax, dy = currentRouteCoords[i][1] - ay;
+    const segLen2 = dx * dx + dy * dy || 1e-12;
+    let t = ((px - ax) * dx + (py - ay) * dy) / segLen2;
+    t = Math.max(0, Math.min(1, t));
+    const cx = ax + dx * t, cy = ay + dy * t;
+    const d2 = (px - cx) * (px - cx) + (py - cy) * (py - cy);
+    if (d2 < best) { best = d2; along = routeCum[i - 1] + t * (routeCum[i] - routeCum[i - 1]); }
+  }
+  return along / routeTotal;
+}
+
+function setRouteProgress(frac) {
+  if (!map || !map.getLayer("route")) return;
+  const f = Math.max(0.0001, Math.min(0.9999, frac));
+  map.setPaintProperty("route", "line-gradient",
+    ["step", ["line-progress"], ROUTE_WALKED, f, ROUTE_TEAL]);
 }
 
 function ensureMap(night) {
@@ -879,6 +931,7 @@ function startWalking(coords, start, night) {
   currentRouteCoords = coords;
   startPoint = start;
   walkFinished = false;
+  prepRouteProgress(coords);
 
   // Cache the route the moment it exists so signal loss does not break the walk.
   try { localStorage.setItem(STORE_KEY + ".current", JSON.stringify({ coords, start, duration: currentDuration })); } catch (e) {}
@@ -905,6 +958,12 @@ function onPosition(p) {
   const now = Date.now();
   const here = [p.coords.longitude, p.coords.latitude];
   moveDotTo(here);
+  if (routeTotal) {
+    // Progress only moves forward so jitter and the loop closing near the start
+    // cannot make the colour run backward.
+    walkProgress = Math.max(walkProgress, progressAt(here[0], here[1]));
+    setRouteProgress(walkProgress);
+  }
   if (haversine(here, startPoint) < RETURN_METERS && now - walkStartedAt > 30000) finishWalk(true);
 }
 
