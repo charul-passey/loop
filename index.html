@@ -127,15 +127,25 @@
 
   .shelf-link {
     position: absolute;
-    bottom: calc(env(safe-area-inset-bottom) + 24px);
-    left: 0; right: 0;
-    text-align: center;
+    bottom: calc(env(safe-area-inset-bottom) + 18px);
+    left: 50%;
+    transform: translateX(-50%);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 3px;
+    min-height: 44px;
+    padding: 6px 20px;
     font-family: var(--mono);
     font-size: 12px;
     letter-spacing: 0.12em;
     color: var(--neutral);
-    min-height: 44px;
-    padding: 0 20px;
+  }
+  .shelf-chevron { width: 22px; height: 11px; display: block; animation: bob 1.9s ease-in-out infinite; }
+  .shelf-chevron path { fill: none; stroke: var(--neutral); stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+  @keyframes bob {
+    0%, 100% { transform: translateY(2px); opacity: 0.4; }
+    50% { transform: translateY(-2px); opacity: 1; }
   }
 
   /* Generating: the loop icon draws itself */
@@ -217,20 +227,37 @@
     100% { transform: scale(0.18) translateY(-42vh); opacity: 0; }
   }
 
-  /* Shelf */
-  #shelf { flex-direction: column; }
-  .shelf-head {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    padding: calc(env(safe-area-inset-top) + 20px) 20px 14px;
+  /* Shelf bottom sheet */
+  .shelf-scrim {
+    position: fixed; inset: 0;
+    background: rgba(20, 24, 28, 0.35);
+    opacity: 0;
+    pointer-events: none;
+    z-index: 34;
   }
+  #shelf {
+    position: fixed;
+    left: 0; right: 0; top: 0;
+    height: 100%;
+    display: flex;
+    flex-direction: column;
+    background: var(--paper);
+    border-top-left-radius: 20px;
+    border-top-right-radius: 20px;
+    box-shadow: 0 -12px 44px rgba(20, 24, 28, 0.18);
+    transform: translateY(100%);
+    z-index: 35;
+    will-change: transform;
+  }
+  .grab { flex: none; padding: 12px 0 4px; display: flex; justify-content: center; touch-action: none; cursor: grab; }
+  .grab:active { cursor: grabbing; }
+  .grab-bar { width: 40px; height: 5px; border-radius: 3px; background: var(--neutral); }
+  .shelf-head { flex: none; touch-action: none; padding: 4px 20px 12px; }
   .shelf-head h2 { font-size: 18px; font-weight: 500; letter-spacing: 0.02em; }
-  .shelf-back { font-family: var(--mono); font-size: 12px; letter-spacing: 0.1em; color: var(--neutral); min-height: 44px; display: flex; align-items: center; }
+
+  #shelf-body { flex: 1; overflow-y: auto; -webkit-overflow-scrolling: touch; }
 
   .shelf-grid {
-    flex: 1;
-    overflow-y: auto;
     display: grid;
     grid-template-columns: repeat(3, 1fr);
     gap: 6px;
@@ -251,26 +278,32 @@
   .shelf-cell .cell-date { font-family: var(--mono); font-size: 10px; letter-spacing: 0.04em; color: var(--neutral); margin-top: 8px; }
 
   .shelf-empty {
-    flex: 1;
+    height: 100%;
     display: flex;
     align-items: center;
     justify-content: center;
     text-align: center;
     color: var(--neutral);
     font-size: 16px;
-    padding: 0 40px 80px;
+    padding: 0 40px 60px;
     line-height: 1.5;
   }
 
-  /* Shelf detail */
+  /* Shelf detail, layered above the sheet */
   #detail {
+    position: fixed; inset: 0;
+    display: flex;
     align-items: center;
     justify-content: center;
     flex-direction: column;
     background: var(--paper);
-    z-index: 25;
+    z-index: 45;
     padding: 24px;
+    opacity: 0;
+    visibility: hidden;
+    transition: opacity 0.2s ease, visibility 0.2s ease;
   }
+  #detail.active { opacity: 1; visibility: visible; }
   #detail svg { width: min(78vw, 60vh); height: min(78vw, 60vh); }
   #detail .cer-path { fill: none; stroke: var(--ink); stroke-width: 2.4; stroke-linecap: round; stroke-linejoin: round; }
   #detail .detail-meta { font-family: var(--mono); font-size: 13px; letter-spacing: 0.06em; color: var(--ink); margin-top: 18px; text-align: center; }
@@ -360,6 +393,7 @@
     #done.play .cer-path { animation: none; stroke-dashoffset: 0; }
     @keyframes fadeout { 0%,60%{opacity:1;} 100%{opacity:0;} }
     .card { transform: none; transition: none; }
+    .shelf-chevron { animation: none; opacity: 0.6; }
   }
 </style>
 </head>
@@ -384,7 +418,10 @@
     <div class="walk-label">Walk</div>
 
     <div id="status" class="status"></div>
-    <button id="shelf-link" class="shelf-link">shelf</button>
+    <button id="shelf-link" class="shelf-link" aria-label="Open shelf">
+      <svg class="shelf-chevron" viewBox="0 0 24 12" aria-hidden="true"><path d="M3 9 L12 3 L21 9"></path></svg>
+      <span>shelf</span>
+    </button>
   </section>
 
   <!-- Walking -->
@@ -399,17 +436,16 @@
     <svg viewBox="0 0 100 100" aria-hidden="true"><path class="cer-path" d=""></path></svg>
   </section>
 
-  <!-- Shelf -->
-  <section id="shelf" class="screen">
-    <div class="shelf-head">
-      <h2>Shelf</h2>
-      <button id="shelf-back" class="shelf-back">back</button>
-    </div>
+  <!-- Shelf bottom sheet -->
+  <div id="shelf-scrim" class="shelf-scrim"></div>
+  <section id="shelf" aria-label="Shelf" aria-hidden="true">
+    <div id="shelf-grab" class="grab"><span class="grab-bar"></span></div>
+    <div id="shelf-head" class="shelf-head"><h2>Shelf</h2></div>
     <div id="shelf-body"></div>
   </section>
 
-  <!-- Shelf detail -->
-  <section id="detail" class="screen">
+  <!-- Shelf detail, layered above the sheet -->
+  <section id="detail">
     <svg viewBox="0 0 100 100" aria-hidden="true"><path class="cer-path" d=""></path></svg>
     <div id="detail-meta" class="detail-meta"></div>
     <div class="detail-actions">
@@ -816,6 +852,8 @@ function startWalking(coords, start, night) {
   // Cache the route the moment it exists so signal loss does not break the walk.
   try { localStorage.setItem(STORE_KEY + ".current", JSON.stringify({ coords, start, duration: currentDuration })); } catch (e) {}
 
+  closeShelf(); // never let the sheet linger over the map
+
   // Show the map screen first so the container has real dimensions when
   // MapLibre measures it. Creating the map while it is hidden makes it size
   // to a zero box and never fill the screen.
@@ -894,7 +932,8 @@ function playCeremony(coords) {
   setTimeout(() => {
     el.classList.remove("play");
     renderShelf();
-    setScreen("shelf");
+    setScreen("idle");
+    snapSheet("half");
   }, reduce ? 2200 : 2650);
 }
 
@@ -927,10 +966,80 @@ function renderShelf() {
   });
 }
 
-$("shelf-link").addEventListener("click", openShelf);
-$("shelf-back").addEventListener("click", () => setScreen("idle"));
+/* ---------- shelf bottom sheet ----------
+   Three snap points: closed, half, full. Drag the grabber or the header to
+   move it, flick or release to snap to the nearest, tap the scrim to close. */
+const SHELF_SNAP = { closed: 100, half: 50, full: 0 };
+let shelfState = "closed";
+let shelfPos = 100; // current translateY, as a percent of the panel height
+let shelfDragging = false;
+let shelfStartY = 0, shelfStartPos = 0, shelfLastY = 0, shelfLastT = 0, shelfVel = 0;
 
-function openShelf() { renderShelf(); setScreen("shelf"); }
+function shelfApply(pos, animate) {
+  const panel = $("shelf"), scrim = $("shelf-scrim");
+  panel.style.transition = animate ? "transform 0.34s cubic-bezier(0.22, 0.61, 0.36, 1)" : "none";
+  panel.style.transform = "translateY(" + pos + "%)";
+  scrim.style.transition = animate ? "opacity 0.34s ease" : "none";
+  scrim.style.opacity = ((100 - pos) / 100 * 0.4).toFixed(3);
+  scrim.style.pointerEvents = pos < 99.5 ? "auto" : "none";
+  shelfPos = pos;
+}
+
+function snapSheet(state) {
+  shelfState = state;
+  shelfApply(SHELF_SNAP[state], true);
+  $("shelf").setAttribute("aria-hidden", state === "closed" ? "true" : "false");
+}
+
+function openShelf() { renderShelf(); if (shelfState === "closed") snapSheet("half"); }
+function closeShelf() { snapSheet("closed"); }
+
+function shelfDragStart(e) {
+  shelfDragging = true;
+  shelfStartY = e.clientY;
+  shelfStartPos = shelfPos;
+  shelfLastY = e.clientY;
+  shelfLastT = performance.now();
+  shelfVel = 0;
+  $("shelf").style.transition = "none";
+  try { e.currentTarget.setPointerCapture(e.pointerId); } catch (err) {}
+}
+function shelfDragMove(e) {
+  if (!shelfDragging) return;
+  const vh = window.innerHeight || 1;
+  let pos = shelfStartPos + (e.clientY - shelfStartY) / vh * 100;
+  pos = Math.max(0, Math.min(100, pos));
+  const now = performance.now();
+  const dt = now - shelfLastT;
+  if (dt > 0) shelfVel = (e.clientY - shelfLastY) / dt; // px per ms, positive is down
+  shelfLastY = e.clientY;
+  shelfLastT = now;
+  shelfApply(pos, false);
+}
+function shelfDragEnd() {
+  if (!shelfDragging) return;
+  shelfDragging = false;
+  const pos = shelfPos;
+  let target;
+  if (shelfVel > 0.5) target = pos > 40 ? "closed" : "half";      // fast flick down
+  else if (shelfVel < -0.5) target = pos < 60 ? "full" : "half";  // fast flick up
+  else {
+    const d = { closed: Math.abs(pos - 100), half: Math.abs(pos - 50), full: Math.abs(pos - 0) };
+    target = Object.keys(d).reduce((a, b) => (d[b] < d[a] ? b : a));
+  }
+  snapSheet(target);
+}
+
+["shelf-grab", "shelf-head"].forEach(id => {
+  const el = $(id);
+  el.addEventListener("pointerdown", shelfDragStart);
+  el.addEventListener("pointermove", shelfDragMove);
+  el.addEventListener("pointerup", shelfDragEnd);
+  el.addEventListener("pointercancel", shelfDragEnd);
+});
+
+$("shelf-link").addEventListener("click", openShelf);
+$("shelf-scrim").addEventListener("click", closeShelf);
 
 /* ---------- shelf detail ---------- */
 let detailWalk = null;
@@ -941,9 +1050,9 @@ function openDetail(idx) {
   el.classList.toggle("partial", !w.completed);
   el.querySelector(".cer-path").setAttribute("d", polylineToPath(w.polyline, 100, 12));
   $("detail-meta").textContent = fmtDate(w.date) + "  .  " + w.duration + " min" + (w.completed ? "" : "  .  partial");
-  setScreen("detail");
+  $("detail").classList.add("active");
 }
-$("detail-close").addEventListener("click", () => { renderShelf(); setScreen("shelf"); });
+$("detail-close").addEventListener("click", () => { $("detail").classList.remove("active"); });
 $("detail-share").addEventListener("click", () => { if (detailWalk) exportPNG(detailWalk); });
 
 function exportPNG(w) {
