@@ -1101,6 +1101,14 @@ $("walk").addEventListener("click", async () => {
 drawLoopIcon();
 renderDuration();
 
+// Warm the routing function on load so the first walk is not slowed by a cold
+// start. This sends no location and no personal data, just wakes the endpoint.
+fetch("/api/directions", {
+  method: "POST",
+  headers: { "Content-Type": "application/json" },
+  body: JSON.stringify({ warm: true })
+}).catch(() => {});
+
 /* =========================================================================
    DEV ONLY. Remove before shipping.
    Call __loopSeedShelf() from the browser console to fill the shelf with
