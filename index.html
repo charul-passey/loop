@@ -261,9 +261,10 @@
   .shelf-grid {
     display: grid;
     grid-template-columns: repeat(3, 1fr);
+    align-items: start;
     column-gap: 6px;
-    row-gap: 0;
-    padding: 4px 16px calc(env(safe-area-inset-bottom) + 24px);
+    row-gap: 4px;
+    padding: 6px 16px calc(env(safe-area-inset-bottom) + 24px);
   }
   @media (max-width: 380px) { .shelf-grid { grid-template-columns: repeat(2, 1fr); } }
 
@@ -271,10 +272,10 @@
     display: flex;
     flex-direction: column;
     align-items: center;
-    padding: 0 4px 2px;
+    padding: 0 4px;
     border-radius: 10px;
   }
-  .shelf-cell svg { width: 100%; height: auto; aspect-ratio: 1; display: block; margin-bottom: -6px; }
+  .shelf-cell svg { width: 100%; height: auto; display: block; }
   .shelf-cell .cell-path { fill: none; stroke: var(--ink); stroke-width: 2.4; stroke-linecap: round; stroke-linejoin: round; }
   .shelf-cell.partial { opacity: 0.4; }
   .shelf-cell .cell-date { font-family: var(--mono); font-size: 10px; letter-spacing: 0.02em; color: var(--neutral); margin-top: 0; white-space: nowrap; }
@@ -608,6 +609,32 @@ function polylineToPath(coords, size, pad) {
     const y = size - (oy + (p[1] - minY) * scale); // flip so north points up
     return (i === 0 ? "M" : "L") + x.toFixed(1) + " " + y.toFixed(1);
   }).join(" ");
+}
+
+// Shelf cell version: the shape fills the full width and the box height follows
+// the shape, so there is no wasted vertical space in the cell. Tall shapes are
+// capped so a single elongated loop cannot make one cell enormous.
+function shapeCellPath(coords, pad) {
+  const latRef = coords.reduce((s, c) => s + c[1], 0) / coords.length;
+  const k = Math.cos(latRef * Math.PI / 180);
+  const pts = coords.map(c => [c[0] * k, c[1]]);
+  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+  for (const [x, y] of pts) {
+    if (x < minX) minX = x; if (x > maxX) maxX = x;
+    if (y < minY) minY = y; if (y > maxY) maxY = y;
+  }
+  const w = (maxX - minX) || 1, h = (maxY - minY) || 1;
+  const maxH = 132;
+  let scale = (100 - 2 * pad) / w;
+  if (h * scale + 2 * pad > maxH) scale = (maxH - 2 * pad) / h; // cap very tall shapes
+  const boxH = h * scale + 2 * pad;
+  const ox = (100 - w * scale) / 2; // center within the full width
+  const d = pts.map((p, i) => {
+    const x = ox + (p[0] - minX) * scale;
+    const y = boxH - pad - (p[1] - minY) * scale; // flip so north points up
+    return (i === 0 ? "M" : "L") + x.toFixed(1) + " " + y.toFixed(1);
+  }).join(" ");
+  return { d: d, h: +boxH.toFixed(1) };
 }
 
 /* ---------- routing calls ----------
@@ -959,9 +986,10 @@ function renderShelf() {
     const realIdx = store.walks.length - 1 - revIdx;
     const cell = document.createElement("button");
     cell.className = "shelf-cell" + (w.completed ? "" : " partial");
+    const shape = shapeCellPath(w.polyline, 4);
     cell.innerHTML =
-      '<svg viewBox="0 0 100 100" aria-hidden="true"><path class="cell-path" d="' +
-      polylineToPath(w.polyline, 100, 4) + '"></path></svg>' +
+      '<svg viewBox="0 0 100 ' + shape.h + '" aria-hidden="true"><path class="cell-path" d="' +
+      shape.d + '"></path></svg>' +
       '<span class="cell-date">' + fmtDate(w.date) + ' · ' + w.duration + ' min</span>';
     cell.addEventListener("click", () => openDetail(realIdx));
     body.appendChild(cell);
