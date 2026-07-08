@@ -1,0 +1,1031 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, maximum-scale=1" />
+<meta name="theme-color" content="#EBEEF2" />
+<title>Loop</title>
+
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet" />
+
+<link rel="stylesheet" href="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.css" />
+<script src="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
+
+<style>
+  :root {
+    --paper: #EBEEF2;
+    --ink: #14181C;
+    --teal: #0E6E78;
+    --neutral: #C9C2B6;
+    --sans: "Space Grotesk", system-ui, sans-serif;
+    --mono: "Space Mono", ui-monospace, monospace;
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; -webkit-tap-highlight-color: transparent; }
+
+  html, body { height: 100%; }
+
+  body {
+    font-family: var(--sans);
+    background: var(--paper);
+    color: var(--ink);
+    overflow: hidden;
+    position: fixed;
+    inset: 0;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  /* Night theme, applied once we know the walker's local time */
+  body.night {
+    --paper: #14181C;
+    --ink: #EBEEF2;
+    --neutral: #4A4E52;
+  }
+
+  button { font-family: inherit; color: inherit; border: none; background: none; cursor: pointer; }
+
+  :focus-visible { outline: 2px solid var(--ink); outline-offset: 3px; border-radius: 4px; }
+
+  .screen { position: absolute; inset: 0; display: none; }
+  .screen.active { display: flex; }
+
+  /* Idle */
+  #idle {
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    padding: env(safe-area-inset-top) 24px calc(env(safe-area-inset-bottom) + 24px);
+  }
+
+  .wordmark {
+    position: absolute;
+    top: calc(env(safe-area-inset-top) + 22px);
+    left: 0; right: 0;
+    text-align: center;
+    font-size: 15px;
+    font-weight: 500;
+    letter-spacing: 0.12em;
+    color: var(--ink);
+  }
+
+  .duration {
+    font-size: 84px;
+    font-weight: 500;
+    line-height: 1;
+    letter-spacing: -0.02em;
+    padding: 8px 16px;
+    border-radius: 12px;
+  }
+  .duration .unit { font-size: 24px; font-weight: 400; color: var(--neutral); margin-left: 8px; }
+
+  .duration-row { margin-bottom: 44px; text-align: center; }
+  .duration-hint {
+    font-family: var(--mono);
+    font-size: 11px;
+    letter-spacing: 0.06em;
+    color: var(--neutral);
+    margin-top: 6px;
+  }
+
+  .walk-btn {
+    width: 208px;
+    height: 208px;
+    border-radius: 50%;
+    background: var(--teal);
+    display: grid;
+    place-items: center;
+    box-shadow: 0 10px 40px rgba(14, 110, 120, 0.28);
+    transition: transform 0.16s ease;
+  }
+  .walk-btn:active { transform: scale(0.97); }
+
+  .walk-btn .loop-icon { width: 96px; height: 96px; display: block; }
+  .walk-btn .loop-path { fill: none; stroke: var(--paper); stroke-width: 5; stroke-linecap: round; stroke-linejoin: round; }
+  .walk-label {
+    margin-top: 18px;
+    font-size: 20px;
+    font-weight: 500;
+    letter-spacing: 0.02em;
+  }
+
+  .status {
+    position: absolute;
+    bottom: calc(env(safe-area-inset-bottom) + 96px);
+    left: 0; right: 0;
+    text-align: center;
+    font-family: var(--mono);
+    font-size: 12px;
+    letter-spacing: 0.04em;
+    color: var(--neutral);
+    opacity: 0;
+    transition: opacity 0.4s ease;
+    padding: 0 24px;
+  }
+  body.generating .status.show { opacity: 1; }
+
+  .shelf-link {
+    position: absolute;
+    bottom: calc(env(safe-area-inset-bottom) + 24px);
+    left: 0; right: 0;
+    text-align: center;
+    font-family: var(--mono);
+    font-size: 12px;
+    letter-spacing: 0.12em;
+    color: var(--neutral);
+    min-height: 44px;
+    padding: 0 20px;
+  }
+
+  /* Generating: the loop icon draws itself */
+  body.generating .walk-label { visibility: hidden; }
+  body.generating .walk-btn { transform: none; }
+  body.generating .loop-path {
+    stroke-dasharray: var(--len);
+    animation: draw 1.7s ease-in-out infinite;
+  }
+  @keyframes draw {
+    0%   { stroke-dashoffset: var(--len); }
+    55%  { stroke-dashoffset: 0; }
+    100% { stroke-dashoffset: 0; opacity: 0.15; }
+  }
+
+  /* Walking */
+  #walking { flex-direction: column; }
+  #map { position: absolute; inset: 0; }
+
+  .elapsed {
+    position: absolute;
+    top: calc(env(safe-area-inset-top) + 20px);
+    left: 0; right: 0;
+    text-align: center;
+    font-family: var(--mono);
+    font-size: 15px;
+    letter-spacing: 0.1em;
+    color: var(--ink);
+    z-index: 5;
+    pointer-events: none;
+    text-shadow: 0 1px 6px var(--paper), 0 1px 3px var(--paper);
+  }
+
+  .end-btn {
+    position: absolute;
+    bottom: calc(env(safe-area-inset-bottom) + 26px);
+    left: 50%;
+    transform: translateX(-50%);
+    z-index: 5;
+    min-width: 88px;
+    min-height: 44px;
+    padding: 0 22px;
+    border-radius: 22px;
+    background: var(--paper);
+    color: var(--ink);
+    font-size: 14px;
+    font-weight: 500;
+    border: 1px solid var(--neutral);
+    box-shadow: 0 4px 16px rgba(20, 24, 28, 0.12);
+  }
+
+  .user-dot {
+    width: 18px; height: 18px;
+    border-radius: 50%;
+    background: var(--ink);
+    border: 3px solid var(--paper);
+    box-shadow: 0 0 0 4px rgba(20, 24, 28, 0.12);
+  }
+  body.night .user-dot { background: var(--paper); border-color: var(--ink); }
+
+  /* Done ceremony */
+  #done {
+    align-items: center;
+    justify-content: center;
+    background: var(--paper);
+    z-index: 20;
+  }
+  #done svg { width: min(74vw, 74vh); height: min(74vw, 74vh); }
+  #done .cer-path { fill: none; stroke: var(--ink); stroke-width: 2.4; stroke-linecap: round; stroke-linejoin: round; }
+  #done.play svg { animation: lift 2.6s ease forwards; }
+  #done.play .cer-path { animation: trace 1.3s ease forwards; }
+  @keyframes trace {
+    from { stroke-dashoffset: var(--len); }
+    to   { stroke-dashoffset: 0; }
+  }
+  @keyframes lift {
+    0%   { transform: scale(1) translateY(0); opacity: 1; }
+    62%  { transform: scale(1) translateY(0); opacity: 1; }
+    100% { transform: scale(0.18) translateY(-42vh); opacity: 0; }
+  }
+
+  /* Shelf */
+  #shelf { flex-direction: column; }
+  .shelf-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: calc(env(safe-area-inset-top) + 20px) 20px 14px;
+  }
+  .shelf-head h2 { font-size: 18px; font-weight: 500; letter-spacing: 0.02em; }
+  .shelf-back { font-family: var(--mono); font-size: 12px; letter-spacing: 0.1em; color: var(--neutral); min-height: 44px; display: flex; align-items: center; }
+
+  .shelf-grid {
+    flex: 1;
+    overflow-y: auto;
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 6px;
+    padding: 4px 16px calc(env(safe-area-inset-bottom) + 24px);
+  }
+  @media (max-width: 380px) { .shelf-grid { grid-template-columns: repeat(2, 1fr); } }
+
+  .shelf-cell {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    padding: 12px 4px 14px;
+    border-radius: 10px;
+  }
+  .shelf-cell svg { width: 100%; height: auto; aspect-ratio: 1; }
+  .shelf-cell .cell-path { fill: none; stroke: var(--ink); stroke-width: 2.2; stroke-linecap: round; stroke-linejoin: round; }
+  .shelf-cell.partial { opacity: 0.4; }
+  .shelf-cell .cell-date { font-family: var(--mono); font-size: 10px; letter-spacing: 0.04em; color: var(--neutral); margin-top: 8px; }
+
+  .shelf-empty {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    text-align: center;
+    color: var(--neutral);
+    font-size: 16px;
+    padding: 0 40px 80px;
+    line-height: 1.5;
+  }
+
+  /* Shelf detail */
+  #detail {
+    align-items: center;
+    justify-content: center;
+    flex-direction: column;
+    background: var(--paper);
+    z-index: 25;
+    padding: 24px;
+  }
+  #detail svg { width: min(78vw, 60vh); height: min(78vw, 60vh); }
+  #detail .cer-path { fill: none; stroke: var(--ink); stroke-width: 2.4; stroke-linecap: round; stroke-linejoin: round; }
+  #detail .detail-meta { font-family: var(--mono); font-size: 13px; letter-spacing: 0.06em; color: var(--ink); margin-top: 18px; text-align: center; }
+  #detail .detail-actions { display: flex; gap: 14px; margin-top: 26px; }
+  #detail .detail-actions button {
+    min-height: 44px; padding: 0 20px; border-radius: 22px;
+    border: 1px solid var(--neutral); font-size: 14px; font-weight: 500;
+  }
+  #detail.partial svg { opacity: 0.4; }
+
+  /* Address prompt + setup note (shared card) */
+  .sheet {
+    position: absolute; inset: 0;
+    display: none;
+    align-items: center; justify-content: center;
+    background: rgba(20, 24, 28, 0.18);
+    z-index: 30;
+    padding: 28px;
+  }
+  .sheet.active { display: flex; }
+  .card {
+    background: var(--paper);
+    border: 1px solid var(--neutral);
+    border-radius: 16px;
+    padding: 26px 22px;
+    width: 100%;
+    max-width: 360px;
+    box-shadow: 0 20px 60px rgba(20, 24, 28, 0.22);
+  }
+  .card p { font-size: 15px; line-height: 1.5; color: var(--ink); }
+  .card .muted { color: var(--neutral); font-size: 13px; margin-top: 8px; font-family: var(--mono); letter-spacing: 0.02em; }
+  .card input {
+    width: 100%;
+    margin-top: 16px;
+    padding: 12px 14px;
+    font-family: var(--sans);
+    font-size: 16px;
+    color: var(--ink);
+    background: var(--paper);
+    border: 1px solid var(--neutral);
+    border-radius: 10px;
+  }
+  .card input::placeholder { color: var(--neutral); }
+  .card .row { display: flex; gap: 10px; margin-top: 16px; }
+  .card .row button { flex: 1; min-height: 44px; border-radius: 10px; font-size: 15px; font-weight: 500; }
+  .card .go { background: var(--ink); color: var(--paper); }
+  .card .cancel { border: 1px solid var(--neutral); }
+
+  /* Keep MapLibre attribution legible in both themes */
+  .maplibregl-ctrl-attrib { font-size: 10px; }
+
+  @media (prefers-reduced-motion: reduce) {
+    .walk-btn { transition: none; }
+    body.generating .loop-path { animation: none; opacity: 0.4; stroke-dasharray: none; }
+    body.generating .status.show { animation: pulse 1.4s ease-in-out infinite; }
+    @keyframes pulse { 0%,100%{opacity:0.4;} 50%{opacity:1;} }
+    #done.play svg { animation: fadeout 2.2s ease forwards; }
+    #done.play .cer-path { animation: none; stroke-dashoffset: 0; }
+    @keyframes fadeout { 0%,60%{opacity:1;} 100%{opacity:0;} }
+  }
+</style>
+</head>
+<body data-screen="idle">
+
+  <!-- Idle -->
+  <section id="idle" class="screen active">
+    <div class="wordmark">Loop</div>
+
+    <div class="duration-row">
+      <button id="duration" class="duration" aria-label="Change walk duration">
+        <span id="duration-num">20</span><span class="unit">min</span>
+      </button>
+      <div class="duration-hint">tap to change</div>
+    </div>
+
+    <button id="walk" class="walk-btn" aria-label="Start a walk">
+      <svg class="loop-icon" viewBox="0 0 100 100" aria-hidden="true">
+        <path class="loop-path" id="loop-path" d=""></path>
+      </svg>
+    </button>
+    <div class="walk-label">Walk</div>
+
+    <div id="status" class="status"></div>
+    <button id="shelf-link" class="shelf-link">shelf</button>
+  </section>
+
+  <!-- Walking -->
+  <section id="walking" class="screen">
+    <div id="map"></div>
+    <div id="elapsed" class="elapsed">00:00</div>
+    <button id="end" class="end-btn">End</button>
+  </section>
+
+  <!-- Done ceremony -->
+  <section id="done" class="screen">
+    <svg viewBox="0 0 100 100" aria-hidden="true"><path class="cer-path" d=""></path></svg>
+  </section>
+
+  <!-- Shelf -->
+  <section id="shelf" class="screen">
+    <div class="shelf-head">
+      <h2>Shelf</h2>
+      <button id="shelf-back" class="shelf-back">back</button>
+    </div>
+    <div id="shelf-body"></div>
+  </section>
+
+  <!-- Shelf detail -->
+  <section id="detail" class="screen">
+    <svg viewBox="0 0 100 100" aria-hidden="true"><path class="cer-path" d=""></path></svg>
+    <div id="detail-meta" class="detail-meta"></div>
+    <div class="detail-actions">
+      <button id="detail-share">share</button>
+      <button id="detail-close">close</button>
+    </div>
+  </section>
+
+  <!-- Address prompt (geolocation denied) -->
+  <div id="addr-sheet" class="sheet">
+    <div class="card">
+      <p>Where are you starting from</p>
+      <div class="muted">an address or a landmark</div>
+      <input id="addr-input" type="text" placeholder="e.g. Dolores Park" autocomplete="off" />
+      <div class="row">
+        <button id="addr-go" class="go">Walk from here</button>
+        <button id="addr-cancel" class="cancel">Cancel</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Setup note (missing key) -->
+  <div id="setup-sheet" class="sheet">
+    <div class="card">
+      <p>Loop needs a routing key to draw walks.</p>
+      <div class="muted">Add a free OpenRouteService key at the top of index.html. The README has the steps.</div>
+      <div class="row">
+        <button id="setup-close" class="go">Got it</button>
+      </div>
+    </div>
+  </div>
+
+<script>
+/* =========================================================================
+   Loop v1. One button, a walking loop appears.
+
+   Get a free routing key at openrouteservice.org and paste it below.
+   Everything the app remembers lives in localStorage under one key.
+   ========================================================================= */
+
+const ORS_API_KEY = ""; // paste your OpenRouteService key here
+
+const STORE_KEY = "loop.v1";
+const DURATIONS = [15, 20, 30, 45];
+const METERS_PER_MIN = 80;
+const SIMILARITY_LIMIT = 0.60;
+const NOVELTY_ATTEMPTS = 3;
+const NEAR_METERS = 30;
+const RETURN_METERS = 75;
+const SAMPLE_POINTS = 40;
+
+/* ---------- storage ---------- */
+function readStore() {
+  try {
+    const raw = localStorage.getItem(STORE_KEY);
+    if (raw) return JSON.parse(raw);
+  } catch (e) {}
+  return { duration: 20, walks: [], manualAddress: "" };
+}
+function writeStore(s) {
+  try { localStorage.setItem(STORE_KEY, JSON.stringify(s)); } catch (e) {}
+}
+let store = readStore();
+
+function addWalk(walk) {
+  store.walks.push(walk);
+  writeStore(store);
+}
+
+/* ---------- geometry helpers ---------- */
+function haversine(a, b) {
+  const R = 6371000;
+  const dLat = (b[1] - a[1]) * Math.PI / 180;
+  const dLng = (b[0] - a[0]) * Math.PI / 180;
+  const la1 = a[1] * Math.PI / 180, la2 = b[1] * Math.PI / 180;
+  const x = Math.sin(dLat / 2) ** 2 + Math.cos(la1) * Math.cos(la2) * Math.sin(dLng / 2) ** 2;
+  return 2 * R * Math.asin(Math.sqrt(x));
+}
+
+function samplePolyline(coords, n) {
+  if (coords.length <= n) return coords.slice();
+  const out = [];
+  for (let i = 0; i < n; i++) {
+    const idx = Math.round(i * (coords.length - 1) / (n - 1));
+    out.push(coords[idx]);
+  }
+  return out;
+}
+
+// Fraction of the new route that runs close to a single past route.
+function similarityTo(newCoords, pastCoords) {
+  const sampled = samplePolyline(newCoords, SAMPLE_POINTS);
+  let near = 0;
+  for (const p of sampled) {
+    for (const q of pastCoords) {
+      if (haversine(p, q) < NEAR_METERS) { near++; break; }
+    }
+  }
+  return near / sampled.length;
+}
+
+function maxSimilarity(newCoords) {
+  let worst = 0;
+  for (const w of store.walks) {
+    if (!w.polyline || w.polyline.length < 2) continue;
+    worst = Math.max(worst, similarityTo(newCoords, w.polyline));
+  }
+  return worst;
+}
+
+function destPoint(lng, lat, distance, bearingDeg) {
+  const R = 6371000;
+  const br = bearingDeg * Math.PI / 180;
+  const la1 = lat * Math.PI / 180, lo1 = lng * Math.PI / 180;
+  const dr = distance / R;
+  const la2 = Math.asin(Math.sin(la1) * Math.cos(dr) + Math.cos(la1) * Math.sin(dr) * Math.cos(br));
+  const lo2 = lo1 + Math.atan2(Math.sin(br) * Math.sin(dr) * Math.cos(la1), Math.cos(dr) - Math.sin(la1) * Math.sin(la2));
+  return [lo2 * 180 / Math.PI, la2 * 180 / Math.PI];
+}
+
+function randSeed() { return Math.floor(Math.random() * 1000000); }
+
+// Rough night check from latitude, longitude and date. Approximation, no API.
+function isNight(lat, lng, date) {
+  const yearStart = Date.UTC(date.getUTCFullYear(), 0, 0);
+  const dayOfYear = Math.floor((date.getTime() - yearStart) / 86400000);
+  const decl = 23.45 * Math.sin(2 * Math.PI * (284 + dayOfYear) / 365) * Math.PI / 180;
+  const latRad = lat * Math.PI / 180;
+  const cosH = -Math.tan(latRad) * Math.tan(decl);
+  if (cosH <= -1) return false; // sun stays up
+  if (cosH >= 1) return true;   // sun stays down
+  const H = Math.acos(cosH) * 12 / Math.PI; // half day length in hours
+  const solarNoonUTC = 12 - lng / 15;
+  const nowUTC = date.getUTCHours() + date.getUTCMinutes() / 60;
+  return nowUTC < solarNoonUTC - H || nowUTC > solarNoonUTC + H;
+}
+
+/* ---------- normalize a polyline into a centered square path ---------- */
+function polylineToPath(coords, size, pad) {
+  const latRef = coords.reduce((s, c) => s + c[1], 0) / coords.length;
+  const k = Math.cos(latRef * Math.PI / 180);
+  const pts = coords.map(c => [c[0] * k, c[1]]);
+  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+  for (const [x, y] of pts) {
+    if (x < minX) minX = x; if (x > maxX) maxX = x;
+    if (y < minY) minY = y; if (y > maxY) maxY = y;
+  }
+  const w = (maxX - minX) || 1, h = (maxY - minY) || 1;
+  const scale = Math.min((size - 2 * pad) / w, (size - 2 * pad) / h);
+  const ox = (size - w * scale) / 2, oy = (size - h * scale) / 2;
+  return pts.map((p, i) => {
+    const x = ox + (p[0] - minX) * scale;
+    const y = size - (oy + (p[1] - minY) * scale); // flip so north points up
+    return (i === 0 ? "M" : "L") + x.toFixed(1) + " " + y.toFixed(1);
+  }).join(" ");
+}
+
+/* ---------- routing calls ---------- */
+async function requestRoundTrip(start, length, seed) {
+  const res = await fetch("https://api.openrouteservice.org/v2/directions/foot-walking/geojson", {
+    method: "POST",
+    headers: {
+      "Authorization": ORS_API_KEY,
+      "Content-Type": "application/json",
+      "Accept": "application/geo+json"
+    },
+    body: JSON.stringify({
+      coordinates: [[start[0], start[1]]],
+      options: { round_trip: { length: length, points: 4, seed: seed } }
+    })
+  });
+  if (!res.ok) throw new Error("route " + res.status);
+  const gj = await res.json();
+  const coords = gj.features && gj.features[0] && gj.features[0].geometry.coordinates;
+  if (!coords || coords.length < 2) throw new Error("empty route");
+  return coords;
+}
+
+async function requestOutAndBack(start, length) {
+  const bearing = Math.random() * 360;
+  const dest = destPoint(start[0], start[1], length / 2, bearing);
+  const res = await fetch("https://api.openrouteservice.org/v2/directions/foot-walking/geojson", {
+    method: "POST",
+    headers: {
+      "Authorization": ORS_API_KEY,
+      "Content-Type": "application/json",
+      "Accept": "application/geo+json"
+    },
+    body: JSON.stringify({ coordinates: [[start[0], start[1]], [dest[0], dest[1]]] })
+  });
+  if (!res.ok) throw new Error("outback " + res.status);
+  const gj = await res.json();
+  const out = gj.features && gj.features[0] && gj.features[0].geometry.coordinates;
+  if (!out || out.length < 2) throw new Error("empty outback");
+  return out.concat(out.slice().reverse());
+}
+
+async function geocode(text) {
+  const url = "https://api.openrouteservice.org/geocode/search?api_key=" +
+    encodeURIComponent(ORS_API_KEY) + "&size=1&text=" + encodeURIComponent(text);
+  const res = await fetch(url);
+  if (!res.ok) throw new Error("geocode " + res.status);
+  const gj = await res.json();
+  const c = gj.features && gj.features[0] && gj.features[0].geometry.coordinates;
+  if (!c) throw new Error("not found");
+  return [c[0], c[1]];
+}
+
+// Generate a route, favouring novelty, then falling back to an out-and-back.
+async function generateRoute(start, minutes) {
+  const length = minutes * METERS_PER_MIN;
+  let best = null, bestSim = Infinity, anySucceeded = false;
+  for (let attempt = 0; attempt < NOVELTY_ATTEMPTS; attempt++) {
+    let coords;
+    try { coords = await requestRoundTrip(start, length, randSeed()); }
+    catch (e) { continue; }
+    anySucceeded = true;
+    const sim = maxSimilarity(coords);
+    if (sim < bestSim) { bestSim = sim; best = coords; }
+    if (sim <= SIMILARITY_LIMIT) return { coords: coords, mode: "loop" };
+  }
+  if (anySucceeded && best) return { coords: best, mode: "loop" };
+  const coords = await requestOutAndBack(start, length);
+  return { coords: coords, mode: "outback" };
+}
+
+/* ---------- idle screen wiring ---------- */
+const $ = (id) => document.getElementById(id);
+
+function drawLoopIcon() {
+  // A single imperfect closed curve, rotated a little differently each load,
+  // a quiet promise that no two loops repeat.
+  const cx = 50, cy = 50, r = 30;
+  const rot = Math.random() * Math.PI * 2;
+  const a1 = 0.18 + Math.random() * 0.14, f1 = 2 + Math.floor(Math.random() * 2), p1 = Math.random() * 6.28;
+  const a2 = 0.10 + Math.random() * 0.10, f2 = 3 + Math.floor(Math.random() * 2), p2 = Math.random() * 6.28;
+  const n = 60, pts = [];
+  for (let i = 0; i <= n; i++) {
+    const t = i / n * Math.PI * 2;
+    const rr = r * (1 + a1 * Math.sin(f1 * t + p1) + a2 * Math.sin(f2 * t + p2));
+    let x = Math.cos(t) * rr, y = Math.sin(t) * rr;
+    const xr = x * Math.cos(rot) - y * Math.sin(rot);
+    const yr = x * Math.sin(rot) + y * Math.cos(rot);
+    pts.push([cx + xr, cy + yr]);
+  }
+  const d = pts.map((p, i) => (i === 0 ? "M" : "L") + p[0].toFixed(1) + " " + p[1].toFixed(1)).join(" ") + " Z";
+  const path = $("loop-path");
+  path.setAttribute("d", d);
+  const len = path.getTotalLength();
+  path.parentElement.parentElement.style.setProperty("--len", len);
+}
+
+function renderDuration() {
+  $("duration-num").textContent = store.duration;
+}
+
+$("duration").addEventListener("click", () => {
+  const i = DURATIONS.indexOf(store.duration);
+  store.duration = DURATIONS[(i + 1) % DURATIONS.length];
+  writeStore(store);
+  renderDuration();
+});
+
+/* ---------- screen switching ---------- */
+function setScreen(name) {
+  document.querySelectorAll(".screen").forEach(s => s.classList.remove("active"));
+  $(name).classList.add("active");
+  document.body.dataset.screen = name;
+}
+
+/* ---------- status text ---------- */
+let stillTimer = null;
+function enterGenerating() {
+  document.body.classList.add("generating");
+  const s = $("status");
+  s.textContent = "drawing your loop";
+  s.classList.add("show");
+  stillTimer = setTimeout(() => { s.textContent = "still drawing your loop"; }, 6000);
+}
+function exitGenerating(msg) {
+  document.body.classList.remove("generating");
+  clearTimeout(stillTimer);
+  const s = $("status");
+  if (msg) { s.textContent = msg; s.classList.add("show"); setTimeout(() => s.classList.remove("show"), 3200); }
+  else { s.classList.remove("show"); }
+}
+
+/* ---------- geolocation ---------- */
+function getCurrentStart() {
+  return new Promise((resolve, reject) => {
+    if (!navigator.geolocation) { reject({ type: "denied" }); return; }
+    navigator.geolocation.getCurrentPosition(
+      p => resolve([p.coords.longitude, p.coords.latitude]),
+      () => reject({ type: "denied" }),
+      { enableHighAccuracy: true, timeout: 10000, maximumAge: 60000 }
+    );
+  });
+}
+
+/* ---------- map + walking ---------- */
+let map = null, userMarker = null;
+let currentRouteCoords = null, startPoint = null, currentDuration = 20;
+let watchId = null, timerId = null, walkStartedAt = 0, lastPos = 0, walkFinished = false;
+
+function buildStyle(night) {
+  const tiles = night
+    ? ["https://a.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}.png",
+       "https://b.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}.png",
+       "https://c.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}.png"]
+    : ["https://a.basemaps.cartocdn.com/light_all/{z}/{x}/{y}.png",
+       "https://b.basemaps.cartocdn.com/light_all/{z}/{x}/{y}.png",
+       "https://c.basemaps.cartocdn.com/light_all/{z}/{x}/{y}.png"];
+  return {
+    version: 8,
+    sources: {
+      base: {
+        type: "raster",
+        tiles: tiles,
+        tileSize: 256,
+        attribution: '&copy; OpenStreetMap contributors &copy; CARTO'
+      }
+    },
+    layers: [{ id: "base", type: "raster", source: "base" }]
+  };
+}
+
+function applyRoute() {
+  const gj = { type: "Feature", geometry: { type: "LineString", coordinates: currentRouteCoords } };
+  if (map.getSource("route")) {
+    map.getSource("route").setData(gj);
+  } else {
+    map.addSource("route", { type: "geojson", data: gj });
+    map.addLayer({
+      id: "route", type: "line", source: "route",
+      layout: { "line-cap": "round", "line-join": "round" },
+      paint: { "line-color": "#0E6E78", "line-width": 4 }
+    });
+  }
+  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+  for (const c of currentRouteCoords) {
+    if (c[0] < minX) minX = c[0]; if (c[0] > maxX) maxX = c[0];
+    if (c[1] < minY) minY = c[1]; if (c[1] > maxY) maxY = c[1];
+  }
+  map.fitBounds([[minX, minY], [maxX, maxY]], { padding: 64, duration: 0 });
+
+  if (!userMarker) {
+    const el = document.createElement("div");
+    el.className = "user-dot";
+    userMarker = new maplibregl.Marker({ element: el });
+  }
+  userMarker.setLngLat(startPoint).addTo(map);
+}
+
+function ensureMap(night) {
+  if (!map) {
+    map = new maplibregl.Map({
+      container: "map",
+      style: buildStyle(night),
+      center: startPoint,
+      zoom: 15,
+      attributionControl: { compact: true }
+    });
+    map.on("style.load", applyRoute);
+  } else {
+    map.setStyle(buildStyle(night)); // style.load re-adds the route
+  }
+}
+
+function formatElapsed(ms) {
+  const total = Math.floor(ms / 1000);
+  const m = Math.floor(total / 60), s = total % 60;
+  return String(m).padStart(2, "0") + ":" + String(s).padStart(2, "0");
+}
+
+function startWalking(coords, start, night) {
+  currentRouteCoords = coords;
+  startPoint = start;
+  walkFinished = false;
+
+  // Cache the route the moment it exists so signal loss does not break the walk.
+  try { localStorage.setItem(STORE_KEY + ".current", JSON.stringify({ coords, start, duration: currentDuration })); } catch (e) {}
+
+  ensureMap(night);
+  setScreen("walking");
+
+  walkStartedAt = Date.now();
+  lastPos = 0;
+  $("elapsed").textContent = "00:00";
+  timerId = setInterval(() => { $("elapsed").textContent = formatElapsed(Date.now() - walkStartedAt); }, 1000);
+
+  if (navigator.geolocation) {
+    watchId = navigator.geolocation.watchPosition(onPosition, () => {}, { enableHighAccuracy: true, maximumAge: 4000 });
+  }
+}
+
+function onPosition(p) {
+  const now = Date.now();
+  const here = [p.coords.longitude, p.coords.latitude];
+  // Throttle map work to about every five seconds to spare the battery.
+  if (now - lastPos < 5000) {
+    if (haversine(here, startPoint) < RETURN_METERS && now - walkStartedAt > 30000) finishWalk(true);
+    return;
+  }
+  lastPos = now;
+  if (userMarker) userMarker.setLngLat(here);
+  if (haversine(here, startPoint) < RETURN_METERS && now - walkStartedAt > 30000) finishWalk(true);
+}
+
+function stopWalk() {
+  if (watchId !== null && navigator.geolocation) navigator.geolocation.clearWatch(watchId);
+  watchId = null;
+  if (timerId) clearInterval(timerId);
+  timerId = null;
+  try { localStorage.removeItem(STORE_KEY + ".current"); } catch (e) {}
+}
+
+function finishWalk(completed) {
+  if (walkFinished) return;
+  walkFinished = true;
+  stopWalk();
+  addWalk({
+    date: new Date().toISOString(),
+    duration: currentDuration,
+    polyline: currentRouteCoords,
+    completed: completed
+  });
+  playCeremony(currentRouteCoords);
+}
+
+$("end").addEventListener("click", () => {
+  // If the walker is already home, it counts as complete, otherwise it is a
+  // partial walk, saved without comment.
+  let completed = false;
+  if (userMarker) {
+    const ll = userMarker.getLngLat();
+    completed = haversine([ll.lng, ll.lat], startPoint) < RETURN_METERS;
+  }
+  finishWalk(completed);
+});
+
+/* ---------- done ceremony ---------- */
+function playCeremony(coords) {
+  const el = $("done");
+  const path = el.querySelector(".cer-path");
+  path.setAttribute("d", polylineToPath(coords, 100, 12));
+  const len = path.getTotalLength();
+  path.style.strokeDasharray = len;
+  path.style.strokeDashoffset = len;
+  el.style.setProperty("--len", len);
+  setScreen("done");
+  // reflow so the animation restarts cleanly
+  void el.offsetWidth;
+  el.classList.add("play");
+  const reduce = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  setTimeout(() => {
+    el.classList.remove("play");
+    renderShelf();
+    setScreen("shelf");
+  }, reduce ? 2200 : 2650);
+}
+
+/* ---------- shelf ---------- */
+function fmtDate(iso) {
+  const d = new Date(iso);
+  return d.toLocaleDateString("en-US", { month: "short", day: "numeric" }).toLowerCase();
+}
+
+function renderShelf() {
+  const body = $("shelf-body");
+  body.innerHTML = "";
+  if (!store.walks.length) {
+    body.className = "shelf-empty";
+    body.textContent = "Your first shape is one button away.";
+    return;
+  }
+  body.className = "shelf-grid";
+  const walks = store.walks.slice().reverse();
+  walks.forEach((w, revIdx) => {
+    const realIdx = store.walks.length - 1 - revIdx;
+    const cell = document.createElement("button");
+    cell.className = "shelf-cell" + (w.completed ? "" : " partial");
+    cell.innerHTML =
+      '<svg viewBox="0 0 100 100" aria-hidden="true"><path class="cell-path" d="' +
+      polylineToPath(w.polyline, 100, 12) + '"></path></svg>' +
+      '<span class="cell-date">' + fmtDate(w.date) + '</span>';
+    cell.addEventListener("click", () => openDetail(realIdx));
+    body.appendChild(cell);
+  });
+}
+
+$("shelf-link").addEventListener("click", openShelf);
+$("shelf-back").addEventListener("click", () => setScreen("idle"));
+
+function openShelf() { renderShelf(); setScreen("shelf"); }
+
+/* ---------- shelf detail ---------- */
+let detailWalk = null;
+function openDetail(idx) {
+  const w = store.walks[idx];
+  detailWalk = w;
+  const el = $("detail");
+  el.classList.toggle("partial", !w.completed);
+  el.querySelector(".cer-path").setAttribute("d", polylineToPath(w.polyline, 100, 12));
+  $("detail-meta").textContent = fmtDate(w.date) + "  .  " + w.duration + " min" + (w.completed ? "" : "  .  partial");
+  setScreen("detail");
+}
+$("detail-close").addEventListener("click", () => { renderShelf(); setScreen("shelf"); });
+$("detail-share").addEventListener("click", () => { if (detailWalk) exportPNG(detailWalk); });
+
+function exportPNG(w) {
+  const size = 1000, pad = 120;
+  const canvas = document.createElement("canvas");
+  canvas.width = size; canvas.height = size;
+  const ctx = canvas.getContext("2d");
+  ctx.fillStyle = "#EBEEF2";
+  ctx.fillRect(0, 0, size, size);
+
+  const latRef = w.polyline.reduce((s, c) => s + c[1], 0) / w.polyline.length;
+  const k = Math.cos(latRef * Math.PI / 180);
+  const pts = w.polyline.map(c => [c[0] * k, c[1]]);
+  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+  for (const [x, y] of pts) {
+    if (x < minX) minX = x; if (x > maxX) maxX = x;
+    if (y < minY) minY = y; if (y > maxY) maxY = y;
+  }
+  const bw = (maxX - minX) || 1, bh = (maxY - minY) || 1;
+  const scale = Math.min((size - 2 * pad) / bw, (size - 2 * pad) / bh);
+  const ox = (size - bw * scale) / 2, oy = (size - bh * scale) / 2;
+
+  ctx.strokeStyle = "#14181C";
+  ctx.lineWidth = 10;
+  ctx.lineCap = "round";
+  ctx.lineJoin = "round";
+  ctx.globalAlpha = w.completed ? 1 : 0.4;
+  ctx.beginPath();
+  pts.forEach((p, i) => {
+    const x = ox + (p[0] - minX) * scale;
+    const y = size - (oy + (p[1] - minY) * scale);
+    if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+  });
+  ctx.stroke();
+
+  const a = document.createElement("a");
+  a.download = "loop-" + w.date.slice(0, 10) + ".png";
+  a.href = canvas.toDataURL("image/png");
+  a.click();
+}
+
+/* ---------- swipe up on idle to open shelf ---------- */
+let touchStartY = null;
+$("idle").addEventListener("touchstart", e => { touchStartY = e.touches[0].clientY; }, { passive: true });
+$("idle").addEventListener("touchend", e => {
+  if (touchStartY === null) return;
+  const dy = touchStartY - e.changedTouches[0].clientY;
+  if (dy > 70) openShelf();
+  touchStartY = null;
+}, { passive: true });
+
+/* ---------- address prompt ---------- */
+function showAddressPrompt() {
+  $("addr-input").value = store.manualAddress || "";
+  $("addr-sheet").classList.add("active");
+  setTimeout(() => $("addr-input").focus(), 50);
+}
+$("addr-cancel").addEventListener("click", () => { $("addr-sheet").classList.remove("active"); exitGenerating(); });
+$("addr-go").addEventListener("click", async () => {
+  const text = $("addr-input").value.trim();
+  if (!text) return;
+  store.manualAddress = text;
+  writeStore(store);
+  $("addr-sheet").classList.remove("active");
+  enterGenerating();
+  try {
+    const start = await geocode(text);
+    await generateAndGo(start);
+  } catch (e) {
+    exitGenerating("could not find that place");
+  }
+});
+
+/* ---------- setup note ---------- */
+$("setup-close").addEventListener("click", () => $("setup-sheet").classList.remove("active"));
+
+/* ---------- main walk press ---------- */
+async function generateAndGo(start) {
+  currentDuration = store.duration;
+  const night = isNight(start[1], start[0], new Date());
+  document.body.classList.toggle("night", night);
+  try {
+    const result = await generateRoute(start, currentDuration);
+    exitGenerating(result.mode === "outback" ? "Today is an out-and-back." : "");
+    startWalking(result.coords, start, night);
+  } catch (e) {
+    exitGenerating("no loop here right now, try again");
+  }
+}
+
+$("walk").addEventListener("click", async () => {
+  if (!ORS_API_KEY) { $("setup-sheet").classList.add("active"); return; }
+  enterGenerating();
+  try {
+    const start = await getCurrentStart();
+    await generateAndGo(start);
+  } catch (err) {
+    exitGenerating();
+    showAddressPrompt();
+  }
+});
+
+/* ---------- boot ---------- */
+drawLoopIcon();
+renderDuration();
+
+/* =========================================================================
+   DEV ONLY. Remove before shipping.
+   Call __loopSeedShelf() from the browser console to fill the shelf with
+   twelve plausible fake shapes for portfolio screenshots.
+   ========================================================================= */
+window.__loopSeedShelf = function () {
+  function fakeLoop() {
+    const cx = -122.42, cy = 37.76, r = 0.004;
+    const a1 = 0.2 + Math.random() * 0.3, f1 = 2 + Math.floor(Math.random() * 3), p1 = Math.random() * 6.28;
+    const a2 = 0.1 + Math.random() * 0.2, f2 = 3 + Math.floor(Math.random() * 4), p2 = Math.random() * 6.28;
+    const rot = Math.random() * 6.28, sx = 0.7 + Math.random() * 0.6;
+    const n = 56, coords = [];
+    for (let i = 0; i <= n; i++) {
+      const t = i / n * Math.PI * 2;
+      const rr = r * (1 + a1 * Math.sin(f1 * t + p1) + a2 * Math.sin(f2 * t + p2));
+      let x = Math.cos(t) * rr * sx, y = Math.sin(t) * rr;
+      coords.push([cx + x * Math.cos(rot) - y * Math.sin(rot), cy + x * Math.sin(rot) + y * Math.cos(rot)]);
+    }
+    return coords;
+  }
+  const now = Date.now();
+  for (let i = 0; i < 12; i++) {
+    store.walks.push({
+      date: new Date(now - (i * 2 + 1) * 86400000).toISOString(),
+      duration: DURATIONS[Math.floor(Math.random() * DURATIONS.length)],
+      polyline: fakeLoop(),
+      completed: Math.random() > 0.22
+    });
+  }
+  writeStore(store);
+  renderShelf();
+  console.log("Seeded 12 fake shapes. Remove __loopSeedShelf before shipping.");
+};
+</script>
+</body>
+</html>
