@@ -89,6 +89,18 @@
     color: var(--ink);
   }
 
+  .tagline {
+    position: absolute;
+    top: calc(env(safe-area-inset-top) + 46px);
+    left: 0; right: 0;
+    text-align: center;
+    font-family: var(--mono);
+    font-size: 12px;
+    letter-spacing: 0.03em;
+    color: var(--neutral);
+    padding: 0 24px;
+  }
+
   .duration {
     font-size: 84px;
     font-weight: 500;
@@ -427,6 +439,7 @@
   <!-- Idle -->
   <section id="idle" class="screen active">
     <div class="wordmark">Loop</div>
+    <div class="tagline">a walking loop, sized to your time</div>
 
     <div class="duration-row">
       <button id="duration" class="duration" aria-label="Change walk duration">
