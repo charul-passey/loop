@@ -545,7 +545,11 @@ function isNight(lat, lng, date) {
   const H = Math.acos(cosH) * 12 / Math.PI; // half day length in hours
   const solarNoonUTC = 12 - lng / 15;
   const nowUTC = date.getUTCHours() + date.getUTCMinutes() / 60;
-  return nowUTC < solarNoonUTC - H || nowUTC > solarNoonUTC + H;
+  // Hours from solar noon, wrapped into [-12, 12) so the comparison holds even
+  // when the daylight window crosses the UTC day boundary.
+  let fromNoon = nowUTC - solarNoonUTC;
+  fromNoon = ((fromNoon + 12) % 24 + 24) % 24 - 12;
+  return Math.abs(fromNoon) > H;
 }
 
 /* ---------- normalize a polyline into a centered square path ---------- */
