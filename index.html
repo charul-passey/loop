@@ -284,13 +284,16 @@
   /* Address prompt + setup note (shared card) */
   .sheet {
     position: absolute; inset: 0;
-    display: none;
+    display: flex;
     align-items: center; justify-content: center;
     background: rgba(20, 24, 28, 0.18);
     z-index: 30;
     padding: 28px;
+    opacity: 0;
+    visibility: hidden;
+    transition: opacity 0.26s ease, visibility 0.26s ease;
   }
-  .sheet.active { display: flex; }
+  .sheet.active { opacity: 1; visibility: visible; }
   .card {
     background: var(--paper);
     border: 1px solid var(--neutral);
@@ -299,7 +302,10 @@
     width: 100%;
     max-width: 360px;
     box-shadow: 0 20px 60px rgba(20, 24, 28, 0.22);
+    transform: translateY(14px) scale(0.98);
+    transition: transform 0.26s ease;
   }
+  .sheet.active .card { transform: translateY(0) scale(1); }
   .card p { font-size: 15px; line-height: 1.5; color: var(--ink); }
   .card .muted { color: var(--neutral); font-size: 13px; margin-top: 8px; font-family: var(--mono); letter-spacing: 0.02em; }
   .card input {
@@ -314,6 +320,29 @@
     border-radius: 10px;
   }
   .card input::placeholder { color: var(--neutral); }
+
+  .suggest {
+    margin-top: 6px;
+    display: none;
+    flex-direction: column;
+    max-height: 184px;
+    overflow-y: auto;
+    border: 1px solid var(--neutral);
+    border-radius: 10px;
+  }
+  .suggest.show { display: flex; }
+  .suggest-item {
+    text-align: left;
+    padding: 11px 14px;
+    min-height: 44px;
+    font-size: 14px;
+    color: var(--ink);
+    background: var(--paper);
+    border-bottom: 1px solid var(--neutral);
+  }
+  .suggest-item:last-child { border-bottom: none; }
+  .suggest-item:hover, .suggest-item:focus-visible { background: rgba(20, 24, 28, 0.06); }
+
   .card .row { display: flex; gap: 10px; margin-top: 16px; }
   .card .row button { flex: 1; min-height: 44px; border-radius: 10px; font-size: 15px; font-weight: 500; }
   .card .go { background: var(--ink); color: var(--paper); }
@@ -330,6 +359,7 @@
     #done.play svg { animation: fadeout 2.2s ease forwards; }
     #done.play .cer-path { animation: none; stroke-dashoffset: 0; }
     @keyframes fadeout { 0%,60%{opacity:1;} 100%{opacity:0;} }
+    .card { transform: none; transition: none; }
   }
 </style>
 </head>
@@ -393,7 +423,8 @@
     <div class="card">
       <p>Where are you starting from</p>
       <div class="muted">an address or a landmark</div>
-      <input id="addr-input" type="text" placeholder="e.g. Dolores Park" autocomplete="off" />
+      <input id="addr-input" type="text" placeholder="e.g. Dolores Park" autocomplete="off" role="combobox" aria-expanded="false" aria-controls="addr-suggest" />
+      <div id="addr-suggest" class="suggest" role="listbox"></div>
       <div class="row">
         <button id="addr-go" class="go">Walk from here</button>
         <button id="addr-cancel" class="cancel">Cancel</button>
@@ -940,21 +971,79 @@ $("idle").addEventListener("touchend", e => {
 }, { passive: true });
 
 /* ---------- address prompt ---------- */
+let suggestTimer = null;
+let selectedStart = null; // [lng, lat] when a suggestion has been tapped
+
 function showAddressPrompt() {
   $("addr-input").value = store.manualAddress || "";
+  selectedStart = null;
+  renderSuggestions([]);
   $("addr-sheet").classList.add("active");
   setTimeout(() => $("addr-input").focus(), 50);
 }
-$("addr-cancel").addEventListener("click", () => { $("addr-sheet").classList.remove("active"); exitGenerating(); });
+
+function closeAddressPrompt() {
+  $("addr-sheet").classList.remove("active");
+  clearTimeout(suggestTimer);
+  renderSuggestions([]);
+}
+
+function renderSuggestions(features) {
+  const box = $("addr-suggest");
+  box.innerHTML = "";
+  if (!features.length) {
+    box.classList.remove("show");
+    $("addr-input").setAttribute("aria-expanded", "false");
+    return;
+  }
+  features.forEach(f => {
+    const label = f.properties && f.properties.label;
+    const coords = f.geometry && f.geometry.coordinates;
+    if (!label || !coords) return;
+    const item = document.createElement("button");
+    item.type = "button";
+    item.className = "suggest-item";
+    item.setAttribute("role", "option");
+    item.textContent = label;
+    item.addEventListener("click", () => {
+      $("addr-input").value = label;
+      selectedStart = coords;
+      renderSuggestions([]);
+    });
+    box.appendChild(item);
+  });
+  box.classList.add("show");
+  $("addr-input").setAttribute("aria-expanded", "true");
+}
+
+async function fetchSuggestions(text) {
+  try {
+    const res = await fetch("/api/geocode?text=" + encodeURIComponent(text));
+    if (!res.ok) return;
+    const gj = await res.json();
+    renderSuggestions((gj.features || []).slice(0, 5));
+  } catch (e) {}
+}
+
+$("addr-input").addEventListener("input", () => {
+  selectedStart = null; // typing invalidates a prior pick
+  const text = $("addr-input").value.trim();
+  clearTimeout(suggestTimer);
+  if (text.length < 3) { renderSuggestions([]); return; }
+  suggestTimer = setTimeout(() => fetchSuggestions(text), 250);
+});
+
+$("addr-cancel").addEventListener("click", () => { closeAddressPrompt(); exitGenerating(); });
 $("addr-go").addEventListener("click", async () => {
   const text = $("addr-input").value.trim();
   if (!text) return;
   store.manualAddress = text;
   writeStore(store);
-  $("addr-sheet").classList.remove("active");
+  const picked = selectedStart;
+  closeAddressPrompt();
   enterGenerating();
   try {
-    const start = await geocode(text);
+    const start = picked || await geocode(text);
     await generateAndGo(start);
   } catch (e) {
     if (e && e.noKey) { exitGenerating(); $("setup-sheet").classList.add("active"); }

@@ -13,8 +13,8 @@ module.exports = async (req, res) => {
     return;
   }
   try {
-    const url = "https://api.openrouteservice.org/geocode/search?api_key=" +
-      encodeURIComponent(key) + "&size=1&text=" + encodeURIComponent(text);
+    const url = "https://api.openrouteservice.org/geocode/autocomplete?api_key=" +
+      encodeURIComponent(key) + "&text=" + encodeURIComponent(text);
     const upstream = await fetch(url);
     const body = await upstream.text();
     res.status(upstream.status).setHeader("Content-Type", "application/json").send(body);
