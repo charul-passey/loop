@@ -405,7 +405,7 @@
   <div id="setup-sheet" class="sheet">
     <div class="card">
       <p>Loop needs a routing key to draw walks.</p>
-      <div class="muted">Add a free OpenRouteService key at the top of index.html. The README has the steps.</div>
+      <div class="muted">Set ORS_API_KEY in the Vercel project, or run vercel dev locally. The README has the steps.</div>
       <div class="row">
         <button id="setup-close" class="go">Got it</button>
       </div>
@@ -416,11 +416,11 @@
 /* =========================================================================
    Loop v1. One button, a walking loop appears.
 
-   Get a free routing key at openrouteservice.org and paste it below.
+   Routing runs through two serverless functions in /api, so the
+   OpenRouteService key stays on the server and never reaches the browser.
+   Set ORS_API_KEY in the Vercel project, or run vercel dev locally.
    Everything the app remembers lives in localStorage under one key.
    ========================================================================= */
-
-const ORS_API_KEY = ""; // paste your OpenRouteService key here
 
 const STORE_KEY = "loop.v1";
 const DURATIONS = [15, 20, 30, 45];
@@ -537,20 +537,25 @@ function polylineToPath(coords, size, pad) {
   }).join(" ");
 }
 
-/* ---------- routing calls ---------- */
+/* ---------- routing calls ----------
+   These hit our own /api proxy, not OpenRouteService directly, so the key
+   never reaches the browser. A 503 from the proxy means the key is not set. */
+function noKeyError() {
+  const e = new Error("no_key");
+  e.noKey = true;
+  return e;
+}
+
 async function requestRoundTrip(start, length, seed) {
-  const res = await fetch("https://api.openrouteservice.org/v2/directions/foot-walking/geojson", {
+  const res = await fetch("/api/directions", {
     method: "POST",
-    headers: {
-      "Authorization": ORS_API_KEY,
-      "Content-Type": "application/json",
-      "Accept": "application/geo+json"
-    },
+    headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
       coordinates: [[start[0], start[1]]],
       options: { round_trip: { length: length, points: 4, seed: seed } }
     })
   });
+  if (res.status === 503) throw noKeyError();
   if (!res.ok) throw new Error("route " + res.status);
   const gj = await res.json();
   const coords = gj.features && gj.features[0] && gj.features[0].geometry.coordinates;
@@ -561,15 +566,12 @@ async function requestRoundTrip(start, length, seed) {
 async function requestOutAndBack(start, length) {
   const bearing = Math.random() * 360;
   const dest = destPoint(start[0], start[1], length / 2, bearing);
-  const res = await fetch("https://api.openrouteservice.org/v2/directions/foot-walking/geojson", {
+  const res = await fetch("/api/directions", {
     method: "POST",
-    headers: {
-      "Authorization": ORS_API_KEY,
-      "Content-Type": "application/json",
-      "Accept": "application/geo+json"
-    },
+    headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ coordinates: [[start[0], start[1]], [dest[0], dest[1]]] })
   });
+  if (res.status === 503) throw noKeyError();
   if (!res.ok) throw new Error("outback " + res.status);
   const gj = await res.json();
   const out = gj.features && gj.features[0] && gj.features[0].geometry.coordinates;
@@ -578,9 +580,8 @@ async function requestOutAndBack(start, length) {
 }
 
 async function geocode(text) {
-  const url = "https://api.openrouteservice.org/geocode/search?api_key=" +
-    encodeURIComponent(ORS_API_KEY) + "&size=1&text=" + encodeURIComponent(text);
-  const res = await fetch(url);
+  const res = await fetch("/api/geocode?text=" + encodeURIComponent(text));
+  if (res.status === 503) throw noKeyError();
   if (!res.ok) throw new Error("geocode " + res.status);
   const gj = await res.json();
   const c = gj.features && gj.features[0] && gj.features[0].geometry.coordinates;
@@ -595,7 +596,7 @@ async function generateRoute(start, minutes) {
   for (let attempt = 0; attempt < NOVELTY_ATTEMPTS; attempt++) {
     let coords;
     try { coords = await requestRoundTrip(start, length, randSeed()); }
-    catch (e) { continue; }
+    catch (e) { if (e && e.noKey) throw e; continue; }
     anySucceeded = true;
     const sim = maxSimilarity(coords);
     if (sim < bestSim) { bestSim = sim; best = coords; }
@@ -956,7 +957,8 @@ $("addr-go").addEventListener("click", async () => {
     const start = await geocode(text);
     await generateAndGo(start);
   } catch (e) {
-    exitGenerating("could not find that place");
+    if (e && e.noKey) { exitGenerating(); $("setup-sheet").classList.add("active"); }
+    else exitGenerating("could not find that place");
   }
 });
 
@@ -973,12 +975,12 @@ async function generateAndGo(start) {
     exitGenerating(result.mode === "outback" ? "Today is an out-and-back." : "");
     startWalking(result.coords, start, night);
   } catch (e) {
-    exitGenerating("no loop here right now, try again");
+    if (e && e.noKey) { exitGenerating(); $("setup-sheet").classList.add("active"); }
+    else exitGenerating("no loop here right now, try again");
   }
 }
 
 $("walk").addEventListener("click", async () => {
-  if (!ORS_API_KEY) { $("setup-sheet").classList.add("active"); return; }
   enterGenerating();
   try {
     const start = await getCurrentStart();
